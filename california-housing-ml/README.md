@@ -61,6 +61,17 @@ source .venv/bin/activate   # sur Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
+Uploader un notebook depuis ta machine locale (optionnel)
+
+Si tu as un `.ipynb` local et veux l'ajouter au dépôt sans l'ouvrir dans l'interface Web, utilise le script `tools/upload_notebook.py` depuis la racine du repo :
+
+```bash
+# Exemple :
+python tools/upload_notebook.py /chemin/vers/TP1_ML_California_Housing.ipynb --name TP1_ML_California_Housing.ipynb
+```
+
+Le script copie le notebook dans `california-housing-ml/notebooks/`, commit et pousse sur `origin/main`.
+
 ▶️ Entraînement des modèles
 
 ```bash
