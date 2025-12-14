@@ -1,5 +1,3 @@
-# Machine-Learning-avanc-e
-
 # California Housing Price Prediction
 
 Projet de Machine Learning visant à prédire le prix médian des maisons en Californie à partir du dataset classique
