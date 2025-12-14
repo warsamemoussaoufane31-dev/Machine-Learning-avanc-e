@@ -4,6 +4,10 @@ Projet de Machine Learning visant à prédire le prix médian des maisons en Cal
 "California Housing". Le projet suit un pipeline complet : récupération des données, exploration, préparation,
 modélisation, évaluation, sauvegarde, et mise à disposition d'une API pour la prédiction.
 
+## Changelog
+
+Voir le résumé des changements récents et des tâches exécutées : [CHANGELOG.md](../CHANGELOG.md)
+
 ## 🚀 Fonctionnalités
 
 - Téléchargement automatique du dataset depuis la source d'origine
@@ -99,4 +103,4 @@ docker run -p 8000:8000 california-housing-ml
 ```
 
 👤 Auteur
-Warsame Moussa Oufane
+Warsame Moussa Oufane et Nawel Mordi
