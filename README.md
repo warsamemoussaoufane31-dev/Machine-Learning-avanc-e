@@ -57,50 +57,5 @@ california-housing-ml/
 🛠 Installation
 Prérequis : Python 3.9+ recommandé.
 
-```bash
-git clone https://github.com/<ton-compte>/california-housing-ml.git
-cd california-housing-ml
-python -m venv .venv
-source .venv/bin/activate   # sur Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-Uploader un notebook depuis ta machine locale (optionnel)
-
-Si tu as un `.ipynb` local et veux l'ajouter au dépôt sans l'ouvrir dans l'interface Web, utilise le script `tools/upload_notebook.py` depuis la racine du repo :
-
-```bash
-# Exemple :
-python tools/upload_notebook.py /chemin/vers/TP1_ML_California_Housing.ipynb --name TP1_ML_California_Housing.ipynb
-```
-
-Le script copie le notebook dans `california-housing-ml/notebooks/`, commit et pousse sur `origin/main`.
-
-▶️ Entraînement des modèles
-
-```bash
-python -m src.train_models
-```
-
-▶️ Évaluation
-
-```bash
-python -m src.evaluate
-```
-
-🌐 Lancer l’API de prédiction
-
-```bash
-uvicorn src.api:app --reload
-# http://127.0.0.1:8000/docs
-```
-
-🐳 Docker
-
-```bash
-docker build -t california-housing-ml .
-docker run -p 8000:8000 california-housing-ml
-```
-
 👤 Auteur
 Warsame Moussa Oufane et Nawel Mordi
