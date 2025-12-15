@@ -40,10 +40,9 @@ california-housing-ml/
 │   ├── evaluate.py
 │   ├── api.py
 │   └── utils.py
-├── notebooks/
+├── carnet/
 │   └── TP1_ML_California_Housing.ipynb
-├── models/
-└── data/
+
 ```
 
 🛠 Installation
