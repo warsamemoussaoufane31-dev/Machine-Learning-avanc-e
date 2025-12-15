@@ -46,14 +46,6 @@ california-housing-ml/
 └── data/
 ```
 
-### src/ : scripts Python modulaires
-
-### notebooks/ : notebook Jupyter d’origine
-
-### models/ : fichiers de modèles sauvegardés (joblib)
-
-### data/ : dataset téléchargé automatiquement
-
 🛠 Installation
 Prérequis : Python 3.9+ recommandé.
 
