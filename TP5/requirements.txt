@@ -9,7 +9,7 @@ spacy
 gensim
 wordcloud
 # Deep Learning
-tensorflow>=2.10.0
+tensorflow>=2.10.0,<2.16.0
 # Transformers
 transformers
 torch
