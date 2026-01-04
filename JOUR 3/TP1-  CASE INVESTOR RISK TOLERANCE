@@ -1,0 +1,238 @@
+import numpy as np
+import pandas as pd
+import copy
+import matplotlib.pyplot as plt
+import seaborn as sns
+sns.set(style="whitegrid")
+import warnings
+warnings.filterwarnings("ignore")
+from pathlib import Path
+# Modeling
+from sklearn.model_selection import train_test_split, KFold, cross_val_score, GridSearchCV
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+# Regressors
+from sklearn.linear_model import LinearRegression, Lasso, Ridge
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.svm import SVR
+
+
+dataset = pd.read_excel("C:/Users/warsa/Downloads/SCFP2009panel.xlsx")
+dataset.shape, type(dataset)
+dataset.head(3)
+# 1. 19285 rows, 515 columns
+# 2. Une seule ligne représente un ménage (ou un investisseur individuel) spécifique. Le dataset est un "panel", ce qui signifie que l'on suit les mêmes personnes à deux moments clés : en 2007 (avant la crise financière) et en 2009 (après la crise).
+# 3. Les colonnes "fuitantes" (leaky features) sont toutes celles qui contiennent des données de 2009 (ex: LIQ09, STOCKS09, RT09, Risky09)
+
+# Part 2 — Build the target: “TrueRiskTolerance” 
+#2.1 Compute risky / risk-free buckets and 2007/2009 risk tolerance & missing values
+#Average SP500 during 2007 and 2009
+# used to normalize 2009 risky assets
+Average_SP500_2007=1478
+Average_SP500_2009=948
+
+# Risk-free and risky assets (2007)
+dataset['RiskFree07']= dataset['LIQ07'] + dataset['CDS07'] + dataset['SAVBND07'] + dataset['CASHLI07']
+dataset['Risky07'] = dataset['NMMF07'] + dataset['STOCKS07'] + dataset['BOND07'] 
+dataset['RT07'] = dataset['Risky07']/(dataset['Risky07']+dataset['RiskFree07'])
+
+# Risk-free and risky assets (2009)
+dataset['RiskFree09']= dataset['LIQ09'] + dataset['CDS09'] + dataset['SAVBND09'] + dataset['CASHLI09']
+dataset['Risky09'] = dataset['NMMF09'] + dataset['STOCKS09'] + dataset['BOND09'] 
+dataset['RT09'] = dataset['Risky09']/(dataset['Risky09']+dataset['RiskFree09'])*\
+                (Average_SP500_2009/Average_SP500_2007)
+dataset2 = copy.deepcopy(dataset)  
+dataset2['PercentageChange'] = np.abs(dataset2['RT09']/dataset2['RT07']-1)
+dataset2.head()
+
+# dealing with missing values 
+
+#Checking for any null values and removing the null values'''
+print('Null Values =',dataset2.isnull().values.any())
+# Drop the rows containing NA
+dataset2=dataset2.dropna(axis=0)
+
+dataset2=dataset2[~dataset2.isin([np.nan, np.inf, -np.inf]).any(axis=1)]
+
+#Checking for any null values and removing the null values'''
+print('Null Values =',dataset2.isnull().values.any())
+dataset2.shape
+
+#2.2 Inspect distributions (visual intuition)
+fig, axes = plt.subplots(1,2, figsize=(12,4))
+sns.histplot(dataset2["RT07"].clip(0,1), bins=30, ax=axes[0])
+axes[0].set_title("Risk tolerance 2007")
+sns.histplot(dataset2["RT09"].clip(0,1), bins=30, ax=axes[1])
+axes[1].set_title("Risk tolerance 2009 (normalized)")
+plt.show()
+
+# 2.3 “Intelligent” investors and the final target
+dataset3 = copy.deepcopy(dataset2) 
+dataset3['TrueRiskTolerance'] = (dataset3['RT07'] + dataset3['RT09'])/2
+dataset3.drop(labels=['RT07', 'RT09'], axis=1, inplace=True)
+dataset3.drop(labels=['PercentageChange'], axis=1, inplace=True)
+
+#1. Elle identifie les investisseurs dont l'allocation d'actifs est restée stable malgré la crise, les qualifiant d'investisseurs « intelligents » ou résilients.
+#2. Car la tolérance est définie comme une part (un pourcentage) des actifs financiers totaux, qui ne peut être ni négative ni supérieure à 100 %.
+#3. Réponse : En comparant les deux graphiques, on observe un phénomène massif de « fuite vers la sécurité » (flight-to-safety) au sein de la population étudiée :
+# En 2007 (Avant la crise) : La distribution de la tolérance au risque (RT07) montre que de nombreux investisseurs étaient très exposés aux marchés. On note un pic significatif à 1.0, indiquant qu'une grande partie des ménages détenait la quasi-totalité de ses actifs financiers sous forme risquée (actions, obligations).
+# En 2009 (Après la crise) : On assiste à un basculement radical vers la gauche de l'échelle. Le pic dominant se situe désormais à 0.0, avec plus de 1600 individus ayant totalement abandonné les actifs risqués au profit d'actifs de sécurité (cash, comptes d'épargne).
+# Réduction de l'appétit pour le risque : Globalement, la tolérance au risque normalisée en 2009 ne dépasse plus les 0.65, ce qui montre que même les investisseurs les plus audacieux ont réduit significativement leur exposition par rapport aux niveaux de 2007.
+
+# Part 3 — Feature selection
+keep = ["AGE07","EDCL07","MARRIED07","KIDS07","OCCAT107","INCOME07","RISK07","NETWORTH07","TrueRiskTolerance"]
+# If your file uses alternate names, remap them first using COLS dict.
+Xy = dataset3[keep].dropna().copy()
+X = Xy.drop(columns=["TrueRiskTolerance"])
+y = Xy["TrueRiskTolerance"]
+X.shape, y.shape
+
+corr = Xy.corr(numeric_only=True)
+plt.figure(figsize=(8,6))
+sns.heatmap(corr, annot=True, fmt=".2f", cmap="vlag")
+plt.title("Correlation matrix (features and target)")
+plt.show()
+
+# Scatterplot Matrix
+from pandas.plotting import scatter_matrix
+plt.figure(figsize=(15,15))
+scatter_matrix(Xy,figsize=(14,14))
+plt.show()
+
+# Part 4 — Train/test split & baselines 
+# 4.1 Split
+from sklearn.model_selection import train_test_split
+# Expect dataset3 to already exist from earlier parts, with the 2007 features + TrueRiskTolerance
+Y = dataset3["TrueRiskTolerance"].astype(float)
+X = dataset3.drop(columns=["TrueRiskTolerance"]).copy()
+validation_size = 0.20
+seed = 3
+X_train, X_validation, Y_train, Y_validation = train_test_split(
+    X, Y, test_size=validation_size, random_state=seed
+)
+len(X_train), len(X_validation)
+
+# 4.2 Baseline: predict the training mean
+y_mean = Y_train.mean()
+mae_baseline = mean_absolute_error(Y_validation, np.full_like(Y_validation, y_mean))
+rmse_baseline = mean_squared_error(Y_validation, np.full_like(Y_validation, y_mean))
+r2_baseline = r2_score(Y_validation, np.full_like(Y_validation, y_mean))
+mae_baseline, rmse_baseline, r2_baseline
+
+# 4.2 CV options & metric & Compare models
+from sklearn.model_selection import KFold
+num_folds = 10
+scoring = "r2"
+cv = KFold(n_splits=num_folds, shuffle=True, random_state=seed)
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+
+from sklearn.linear_model import LinearRegression, Lasso, ElasticNet
+from sklearn.neighbors import KNeighborsRegressor
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.svm import SVR
+from sklearn.ensemble import (
+    AdaBoostRegressor, GradientBoostingRegressor, RandomForestRegressor, ExtraTreesRegressor
+)
+from sklearn.model_selection import cross_val_score
+import numpy as np
+import matplotlib.pyplot as plt
+
+models = [
+    ("LR",   Pipeline([("scaler", StandardScaler()), ("m", LinearRegression())])),
+    ("LASSO",Pipeline([("scaler", StandardScaler()), ("m", Lasso(alpha=0.01, max_iter=20000 ))])),
+    ("EN",   Pipeline([("scaler", StandardScaler()), ("m", ElasticNet(alpha=0.01, l1_ratio=0.5, max_iter=20000 ))])),
+    ("KNN",  Pipeline([("scaler", StandardScaler()), ("m", KNeighborsRegressor(n_neighbors=7))])),
+    ("CART", DecisionTreeRegressor(random_state=seed)),
+    ("SVR",  Pipeline([("scaler", StandardScaler()), ("m", SVR(C=2.0, epsilon=0.02, kernel="rbf"))])),
+    ("ABR",  AdaBoostRegressor(random_state=seed)),
+    ("GBR",  GradientBoostingRegressor(random_state=seed)),
+    ("RFR",  RandomForestRegressor(n_estimators=300  , random_state=seed, n_jobs=-1)),
+    ("ETR",  ExtraTreesRegressor(n_estimators=300 , random_state=seed, n_jobs=-1)),
+]
+
+results, names = [], []
+for name, model in models:
+    cv_scores = cross_val_score(model, X_train, Y_train, cv=cv, scoring=scoring, n_jobs=-1)
+    results.append(cv_scores)
+    names.append(name)
+    print(f"{name}: R2 mean={cv_scores.mean():.3f}  std={cv_scores.std():.3f}")
+
+plt.figure(figsize=(12,8))
+plt.boxplot([np.maximum(res, .45) for res in results] , labels=names, showmeans=True)
+plt.title("Algorithm Comparison (10-fold CV, R²)")
+plt.ylabel("R² (higher is better)")
+plt.show()
+
+# 5) Model Tuning & Grid Search
+from sklearn.model_selection import GridSearchCV
+
+rf = RandomForestRegressor(random_state=seed, n_jobs=-1)
+param_grid = {
+    "n_estimators": [50, 100, 150, 200, 250, 300, 350, 400 ],
+    # Optional small add-on:
+     "max_depth": [None, 6, 10],
+}
+grid = GridSearchCV(
+    estimator=rf,
+    param_grid=param_grid,
+    scoring=scoring,
+    cv=cv,
+    n_jobs=-1
+)
+grid_result = grid.fit(X_train, Y_train)
+
+print(f"Best CV R²: {grid_result.best_score_:.6f} using {grid_result.best_params_}")
+
+means = grid_result.cv_results_["mean_test_score"]
+stds  = grid_result.cv_results_["std_test_score"]
+params = grid_result.cv_results_["params"]
+for mean, stdev, param in zip(means, stds, params):
+    print(f"{mean:.6f} ({stdev:.6f}) with: {param}")
+
+# Part 6 Finalize the Model
+# 6.1 Fit on train, evaluate on both train and validation
+from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
+import numpy as np
+
+best_rf = grid_result.best_estimator_
+best_rf.fit(X_train, Y_train)
+
+# Train performance (expect high R²)
+pred_train = best_rf.predict(X_train)
+print("Train R²:", r2_score(Y_train, pred_train))
+
+# Validation performance
+pred_val = best_rf.predict(X_validation)
+print("Validation R²:", r2_score(Y_validation, pred_val))
+print("Validation RMSE:", mean_squared_error(Y_validation, pred_val))
+print("Validation MAE:", mean_absolute_error(Y_validation, pred_val))
+
+# 6.2 Feature importance & business intuition
+import pandas as pd
+import matplotlib.pyplot as plt
+
+fi = pd.Series(best_rf.feature_importances_, index=X.columns).sort_values(ascending=True)
+
+plt.figure(figsize=(8,5))
+fi.tail(10).plot(kind="barh")
+plt.title("Top Feature Importances (Random Forest)")
+plt.xlabel("Importance")
+plt.tight_layout()
+plt.show()
+fi.sort_values(ascending=False).head(10)
+
+# 6.3 Save & reload the model (for the robo-advisor)
+import pickle
+
+FILENAME = "your_model.sav"
+with open(FILENAME, "wb") as f:
+    pickle.dump(best_rf, f)
+# Load test
+with open(FILENAME, "rb") as f:
+    loaded_model = pickle.load(f)
+# Quick check on the validation set
+pred_val_loaded = loaded_model.predict(X_validation)
+print("Reloaded model R²:", r2_score(Y_validation, pred_val_loaded))
+print("Reloaded model RMSE:", mean_squared_error(Y_validation, pred_val_loaded))
