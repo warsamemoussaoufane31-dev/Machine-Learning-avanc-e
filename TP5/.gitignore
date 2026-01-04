@@ -1,0 +1,48 @@
+# Environnements virtuels
+.venv/
+env/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Data & modèles
+data/*.txt
+data/*.csv
+data/*.json
+data/*.pkl
+models/
+embeddings/
+*.bin
+*.vec
+!data/.gitkeep
+!models/.gitkeep
+
+# NLTK data
+nltk_data/
+
+# Hugging Face cache
+.cache/
+transformers_cache/
+
+# Notebooks
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# Word clouds et visualisations
+*.png
+*.jpg
+!docs/*.png
+!docs/*.jpg

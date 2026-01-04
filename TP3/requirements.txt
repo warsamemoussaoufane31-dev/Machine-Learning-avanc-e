@@ -1,0 +1,13 @@
+numpy
+pandas
+matplotlib
+seaborn
+scikit-learn
+scipy
+joblib
+# Réduction de dimensionnalité
+umap-learn
+# Optionnel pour notebooks
+jupyter
+ipywidgets
+plotly

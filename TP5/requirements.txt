@@ -1,0 +1,23 @@
+numpy
+pandas
+matplotlib
+seaborn
+scikit-learn
+# NLP libraries
+nltk
+spacy
+gensim
+wordcloud
+# Deep Learning
+tensorflow>=2.10.0
+# Transformers
+transformers
+torch
+# Text processing
+textblob
+langdetect
+# Optionnel pour notebooks
+jupyter
+ipywidgets
+# Visualisation avancée
+plotly
