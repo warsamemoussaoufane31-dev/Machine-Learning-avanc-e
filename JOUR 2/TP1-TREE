@@ -1,0 +1,180 @@
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder, LabelEncoder
+from sklearn.tree import DecisionTreeClassifier, export_graphviz
+from sklearn.pipeline import Pipeline
+from sklearn.metrics import classification_report
+from graphviz import Source
+import os
+
+# =============================================================================
+# PART 1 – UNDERSTANDING THE PROBLEM & DATASET
+# =============================================================================
+
+# Step 1 – Load the dataset
+df = pd.read_csv("C:/Users/warsa/Downloads/loan_data.csv")
+
+# Question : What do you notice about the columns? 
+# Réponse : On a 14 colonnes. Les numériques incluent le revenu, l'âge et le montant. 
+# Les catégorielles incluent l'éducation, le genre et la propriété du logement.
+df.head()
+
+# Step 2 – Dataset structure
+# Question : How many rows and columns? Are there missing values?
+# Réponse : 45 000 lignes, 14 colonnes. Aucun 'null' (tous les non-null sont à 45 000).
+df.info()
+
+# Step 3 – Target distribution
+# Question : Is the dataset balanced? Why does it matter?
+# Réponse : Non, il est déséquilibré (Support : 35 000 rejets vs 10 000 approbations). 
+# C'est important car le modèle pourrait apprendre à rejeter par défaut.
+sns.countplot(x="loan_status", data=df)
+plt.title("Loan Status Distribution (0=Rejected, 1=Approved)")
+plt.show()
+
+# Step 4 – Gender distribution
+# Question : Do you think gender should affect loan approval? 
+# Réponse : On ne sait pas, mais on voit plus d'hommes que de femmes
+gender_counts = df['person_gender'].value_counts()
+plt.figure(figsize=(6,6))
+plt.pie(gender_counts, labels=gender_counts.index, autopct='%1.1f%%', 
+        startangle=140, colors=['#66b3ff','#ff9999'])
+plt.title("Distribution of Genders")
+plt.axis("equal")
+plt.show()
+
+# Step 5 – Credit score distribution
+# Question : Will high credit scores increase loan approval probability?
+# Réponse : Théoriquement oui. L'image montre une distribution normale (cloche) centrée sur 650.
+sns.histplot(df['credit_score'], bins=30, kde=True, color='skyblue')
+plt.title("Distribution of Credit Scores")
+plt.show()
+
+# Step 6 – Loan amount vs approval
+# Question : Do bigger loans tend to be riskier? What does the plot show?
+# Réponse : Bien que l'on puisse penser que les gros prêts sont plus risqués pour une banque, le graphique montre que les petits prêts font l'objet de plus de refus en proportion.
+plt.figure(figsize=(10,6))
+sns.kdeplot(data=df[df['loan_status']==1], x='loan_amnt', label='Approved', fill=True, color='green')
+sns.kdeplot(data=df[df['loan_status']==0], x='loan_amnt', label='Declined', fill=True, color='red')
+plt.title("Loan Amount Distribution by Loan Status")
+plt.legend()
+plt.show()
+
+# Step 7 – Correlation analysis
+# Question : Which variables seem most correlated? Which are weak?
+# Réponse : Fortes : (previous_loan_defaults_on_file) : C'est la corrélation la plus forte avec une valeur de -0,54. Elle apparaît en bleu foncé sur la matrice, indiquant qu'un historique de défaut réduit fortement les chances d'approbation.
+# Pourcentage du revenu (loan_percent_income) : Avec une corrélation positive de 0,38, cette variable est un indicateur clé. Plus le prêt représente une part importante du salaire, plus le risque perçu change.
+# Taux d'intérêt du prêt (loan_int_rate) : Elle présente une corrélation positive significative de 0,33.
+
+# Faibles : 
+# Genre (person_gender) : Sa corrélation est quasi nulle (-0,0005), ce qui signifie qu'il n'a pratiquement aucune influence statistique sur la décision finale dans ce jeu de données.
+# Score de crédit (credit_score) : Étonnamment, sa corrélation est très faible (-0,007), apparaissant dans des tons très clairs (neutres) sur la matrice.
+# Âge de la personne (person_age) : Avec une valeur de -0,02, l'âge n'influence que très peu l'approbation du prêt ici.
+
+df1 = df.copy()
+le = LabelEncoder()
+df1['person_gender'] = le.fit_transform(df1['person_gender'])
+df1['previous_loan_defaults_on_file'] = le.fit_transform(df1['previous_loan_defaults_on_file'])
+df1 = pd.get_dummies(df1, columns=['person_education', 'person_home_ownership', 'loan_intent'], drop_first=True, dtype=int)
+correlation_matrix = df1.select_dtypes(include=['number']).corr()
+plt.figure(figsize=(12,10))
+sns.heatmap(correlation_matrix, annot=False, cmap="coolwarm")
+plt.show()
+
+# =============================================================================
+# PART 2 – BUILDING A DECISION TREE CLASSIFIER
+# =============================================================================
+
+# Step 1 – Splitting the dataset
+# Question : Why do we use stratify=y?
+# Réponse : Pour garder la même proportion de 0/1 (rejets/approbations) dans chaque set.
+def make_data(df, cols=None, verbos=False):
+    X = df.drop(columns=["loan_status"])
+    if cols: X = X[cols]
+    y = df["loan_status"]
+    X_temp, X_test, y_temp, y_test = train_test_split(X, y, test_size=0.20, stratify=y, random_state=42)
+    X_train, X_val, y_train, y_val = train_test_split(X_temp, y_temp, test_size=0.25, stratify=y_temp, random_state=42)
+    
+    cat_cols = X.select_dtypes(include=["object", "category"]).columns.tolist()
+    num_cols = X.select_dtypes(include=[np.number]).columns.tolist()
+    preprocess = ColumnTransformer([
+        ("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=False), cat_cols),
+        ("num", "passthrough", num_cols)
+    ])
+    return X_train, X_val, X_test, y_train, y_val, y_test, cat_cols, num_cols, preprocess
+
+# Step 2 & 3 – Training and Evaluation
+# Question : What is the difference between gini and entropy?
+# Réponse : Gini est plus rapide (probabilité d'erreur). Entropy utilise les logs (mesure du désordre).
+def model_tree(preprocess, X_train, X_val, y_train, y_val, max_depth=3, criterion="gini", val=True):
+    tree_clf = DecisionTreeClassifier(max_depth=max_depth, criterion=criterion, random_state=42)
+    model = Pipeline([("prep", preprocess), ("tree", tree_clf)])
+    model.fit(X_train, y_train)
+    if val:
+        print(classification_report(y_val, model.predict(X_val), digits=3))
+    return model
+
+# Question : Which metric matters most: precision or recall?
+# Réponse : La Précision (0.852 ici). La banque préfère refuser un bon client (Recall) 
+# plutôt que d'approuver un mauvais payeur (Precision), ce qui coûterait plus cher.
+X_train, X_val, X_test, y_train, y_val, y_test, cat_cols, num_cols, preprocess = make_data(df, verbos=True)
+model = model_tree(preprocess, X_train, X_val, y_train, y_val, max_depth=5, val=True)
+
+# Step 4 – Visualizing the Tree
+# Question : Find one rule (e.g., “If defaults = Yes → Reject”). Business intuition?
+# Réponse : Un historique de défaut est le signe le plus fiable d'un risque futur.
+os.makedirs("DT/images/", exist_ok=True)
+ohe = model.named_steps["prep"].named_transformers_["cat"]
+feature_names = np.r_[ohe.get_feature_names_out(cat_cols), num_cols]
+export_graphviz(model.named_steps["tree"], out_file="DT/images/loan_tree.dot", 
+                feature_names=feature_names, class_names=["Rejected", "Approved"], 
+                filled=True, rounded=True)
+# Source.from_file("DT/images/loan_tree.dot")
+
+# =============================================================================
+# PART 3 – INTERPRETING THE DECISION TREE
+# =============================================================================
+
+# Step 1 – Feature Importance
+# Question : Which features are most important? Why does it make sense?
+# Réponse : 
+# Antécédents de défaut de paiement (previous_loan_defaults_on_file_Yes) : Il s'agit de la variable la plus déterminante avec un score d'importance d'environ 45 %. D'un point de vue bancaire, cela est logique car le comportement financier passé est souvent le meilleur indicateur du risque futur ; un client ayant déjà fait défaut est considéré comme présentant un risque élevé.
+# Pourcentage du revenu consacré au prêt (loan_percent_income) : Cette variable occupe la deuxième place en termes d'importance (environ 20 %). Cela est cohérent avec la logique commerciale, car plus la part du revenu consacrée au remboursement est élevée, plus le risque que l'emprunteur ne puisse pas honorer ses échéances en cas d'imprévu augmente.
+# Taux d'intérêt du prêt (loan_int_rate) : Cette variable est également cruciale (environ 19 %). Un taux d'intérêt élevé est souvent corrélé à des profils de prêt plus risqués ou à des conditions de marché qui influencent directement la capacité de remboursement.
+# Revenu de la personne (person_income) : Bien que moins pondérée que les précédentes, elle reste une variable significative. Le revenu global définit la capacité brute de l'emprunteur à contracter une dette.
+
+# Pourquoi cela est-il cohérent d'un point de vue bancaire ? Ces résultats montrent que le modèle se concentre sur les piliers fondamentaux de l'analyse de crédit : la fiabilité historique (défauts passés) et la capacité financière actuelle (poids du prêt sur le revenu).
+importances = model.named_steps['tree'].feature_importances_ * 100
+Importance = pd.DataFrame({'Importance': importances}, 
+                          index=[i.replace('cat__', '').replace('num__', '') for i in model.named_steps['prep'].get_feature_names_out()])
+Importance.sort_values('Importance').plot(kind='barh', color='r')
+plt.show()
+
+# Step 2 & 3 – Decision Boundary Visualization
+# Question : How do the boundaries look? Do they match business logic?
+# Réponse : Apparence des frontières : Les frontières de décision ne sont pas des lignes courbes ou diagonales, mais des segments horizontaux et verticaux formant des "marches" ou des rectangles. C'est une caractéristique typique des arbres de décision, car ils séparent les données en prenant une seule variable à la fois et en appliquant un seuil binaire (ex: "si valeur > X").
+# Logique métier (Axe Y - loan_percent_income) : On observe un seuil horizontal net autour de 0,25 sur l'axe des ordonnées. Cela signifie que lorsque le prêt représente plus de 25 % du revenu de l'emprunteur, le modèle change radicalement de décision. Cela correspond parfaitement à la logique bancaire où le ratio d'endettement est un facteur de risque majeur.
+# Logique métier (Axe X - loan_int_rate) : On remarque également une séparation verticale vers 15 % sur l'axe des abscisses. Au-delà de ce taux d'intérêt, la zone devient majoritairement verte (Approuvé). Bien que cela puisse paraître contre-intuitif, cela reflète souvent le fait que la banque approuve des dossiers plus risqués uniquement en échange de taux d'intérêt plus élevés pour compenser le risque.
+# La zone rouge (Décliné) se concentre principalement en bas à gauche, là où les taux et le pourcentage du revenu sont relativement bas mais où la densité de points rouges est la plus forte.
+# La zone verte (Approuvé) couvre le haut du graphique (revenus engagés plus élevés) et la partie droite (taux d'intérêt plus élevés).
+# Conclusion : Les frontières sont cohérentes avec un modèle d'arbre de décision simple (profondeur de 3) car elles capturent les seuils critiques de risque financier sans trop complexifier la forme des régions.
+def plot_decision_boundary_binary(model, X, y, feature_names, title="Decision Boundary"):
+    h = .02
+    x_min, x_max = X.iloc[:, 0].min() - 1, X.iloc[:, 0].max() + 1
+    y_min, y_max = X.iloc[:, 1].min() - 0.1, X.iloc[:, 1].max() + 0.1
+    xx, yy = np.meshgrid(np.arange(x_min, x_max, h), np.arange(y_min, y_max, h))
+    Z = model.predict(pd.DataFrame(np.c_[xx.ravel(), yy.ravel()], columns=feature_names)).reshape(xx.shape)
+    plt.figure(figsize=(10, 6))
+    plt.contourf(xx, yy, Z, alpha=0.3, cmap='RdYlGn')
+    plt.scatter(X.iloc[:, 0], X.iloc[:, 1], c=y, edgecolors='k', cmap='RdYlGn', alpha=0.6)
+    plt.title(title)
+    plt.show()
+
+cols = ["loan_int_rate", "loan_percent_income"]
+X_tr_2d, X_val_2d, _, y_tr_2d, y_val_2d, _, _, _, prep_2d = make_data(df, cols=cols)
+model_2d = model_tree(prep_2d, X_tr_2d, X_val_2d, y_tr_2d, y_val_2d, max_depth=3, val=False)
+plot_decision_boundary_binary(model_2d, X_tr_2d[:500], y_tr_2d[:500], feature_names=cols)
