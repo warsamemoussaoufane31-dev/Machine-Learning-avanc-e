@@ -23,26 +23,6 @@ Voir le résumé des changements récents et des tâches exécutées : [CHANGELO
 - Sauvegarde du pipeline et des résultats de modèles avec `joblib`
 - API FastAPI pour faire des prédictions à partir de nouvelles données
 
-## 📁 Structure du projet
-
-```text
-california-housing-ml/
-├── README.md
-├── requirements.txt
-├── .gitignore
-├── Dockerfile
-├── docker-compose.yml
-├── src/
-│   ├── data_fetcher.py
-│   ├── data_exploration.py
-│   ├── data_preparation.py
-│   ├── train_models.py
-│   ├── evaluate.py
-│   ├── api.py
-│   └── utils.py
-├── carnet/
-│   └── TP1_ML_California_Housing.ipynb
-
 ```
 
 🛠 Installation
