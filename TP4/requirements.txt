@@ -5,7 +5,6 @@ seaborn
 scikit-learn
 # Deep Learning avec TensorFlow/Keras
 tensorflow>=2.10.0
-keras
 # Visualisation avancée
 plotly
 # Utilitaires

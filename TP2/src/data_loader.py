@@ -26,7 +26,7 @@ def charger_titanic():
         tuple: (X, y) où X est un DataFrame et y est la cible
     """
     try:
-        titanic = fetch_openml('titanic', version=1, as_frame=True, parser='auto')
+        titanic = fetch_openml('titanic', version=1, as_frame=True)
         X = titanic.data
         y = titanic.target
         return X, y
