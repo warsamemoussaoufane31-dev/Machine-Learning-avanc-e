@@ -1,0 +1,371 @@
+# 0. Setup
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split, KFold, cross_val_score, GridSearchCV
+from sklearn.pipeline import Pipeline
+from sklearn.metrics import classification_report, confusion_matrix, accuracy_score, roc_auc_score
+
+from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.naive_bayes import GaussianNB
+from sklearn.neural_network import MLPClassifier
+from sklearn.svm import SVC
+from sklearn.ensemble import AdaBoostClassifier, GradientBoostingClassifier, RandomForestClassifier, ExtraTreesClassifier
+# Dimensionality reduction & viz
+from sklearn.decomposition import TruncatedSVD
+from sklearn.manifold import TSNE
+
+# Optional: deep learning libs were in the book code, but we won't use them here.
+import warnings
+warnings.filterwarnings('ignore')
+
+pd.set_option('display.width', 160)
+pd.set_option('display.max_columns', 200)
+
+# 1. Load data
+import kagglehub
+
+# Download latest version
+path = kagglehub.dataset_download("mlfinancebook/bitstamp-bicoin-minutes-data")
+
+print("Path to dataset files:", path)
+
+dataset = pd.read_csv(path+'/'+'BitstampData.csv')
+
+
+print(dataset.shape)
+dataset.tail()
+
+# 1.1 Quick NA check and descriptive stats
+print("Any NA? ->", dataset.isnull().values.any())
+print(dataset.describe().T)
+# -----------------------------------------------------------------
+# 2. Clean & drop timestamp
+dataset[dataset.columns.values] = dataset[dataset.columns.values].ffill()
+if 'Timestamp' in dataset.columns:
+    dataset = dataset.drop(columns=['Timestamp'])
+# 2.1 Create short/long MAs and the binary signal
+dataset['short_mavg'] = dataset['Close'].rolling(window=10, min_periods=1, center=False).mean()
+dataset['long_mavg']  = dataset['Close'].rolling(window=60, min_periods=1, center=False).mean()
+dataset['signal'] = np.where(dataset['short_mavg'] > dataset['long_mavg'], 1.0, 0.0)
+dataset[['Close','short_mavg','long_mavg','signal']].tail()
+
+# 2.2 Class balance visual
+fig = plt.figure()
+dataset.groupby('signal').size().plot(kind='barh')
+plt.title('Signal Distribution (1=Buy, 0=Sell)')
+plt.xlabel('Count'); plt.ylabel('Signal'); plt.tight_layout()
+plt.show()
+
+buy_share = 100 * dataset['signal'].mean()
+print(f"Buy frequency: {buy_share:.2f}%")
+#----------------------------------------------------------------------
+# EMA
+def EMA(df, n):
+    return pd.Series(df['Close'].ewm(span=n, min_periods=n).mean(), name=f'EMA_{n}')
+
+# ROC
+def ROC(series, n):
+    M = series.diff(n - 1)
+    N = series.shift(n - 1)
+    return pd.Series(((M / N) * 100), name=f'ROC_{n}')
+
+# Momentum
+def MOM(series, n):
+    return pd.Series(series.diff(n), name=f'Momentum_{n}')
+
+# RSI
+def RSI(series, period):
+    delta = series.diff().dropna()
+    u = delta.clip(lower=0)
+    d = (-delta).clip(lower=0)
+    u.iloc[period-1] = u.iloc[:period].mean()
+    d.iloc[period-1] = d.iloc[:period].mean()
+    u = u.iloc[period-1:].ewm(com=period-1, adjust=False).mean()
+    d = d.iloc[period-1:].ewm(com=period-1, adjust=False).mean()
+    rs = u / d
+    rsi = 100 - (100 / (1 + rs))
+    rsi.index = series.index[-len(rsi):]
+    return rsi.rename(f'RSI_{period}')
+
+# Stochastic Oscillator %K and %D
+def STOK(close, low, high, n):
+    return ((close - low.rolling(n).min()) / (high.rolling(n).max() - low.rolling(n).min())) * 100
+
+def STOD(close, low, high, n):
+    return STOK(close, low, high, n).rolling(3).mean()
+
+# Simple MA
+def MA(df, n):
+    return pd.Series(df['Close'].rolling(n, min_periods=n).mean(), name=f'MA_{n}')
+
+# Compute indicators
+dataset['EMA10']  = EMA(dataset, 10)
+dataset['EMA30']  = EMA(dataset, 30)
+dataset['EMA200'] = EMA(dataset, 200)
+
+dataset['ROC10'] = ROC(dataset['Close'], 10)
+dataset['ROC30'] = ROC(dataset['Close'], 30)
+
+dataset['MOM10'] = MOM(dataset['Close'], 10)
+dataset['MOM30'] = MOM(dataset['Close'], 30)
+
+dataset['RSI10']  = RSI(dataset['Close'], 10)
+dataset['RSI30']  = RSI(dataset['Close'], 30)
+dataset['RSI200'] = RSI(dataset['Close'], 200)
+
+dataset['%K10']   = STOK(dataset['Close'], dataset['Low'], dataset['High'], 10)
+dataset['%D10']   = STOD(dataset['Close'], dataset['Low'], dataset['High'], 10)
+dataset['%K30']   = STOK(dataset['Close'], dataset['Low'], dataset['High'], 30)
+dataset['%D30']   = STOD(dataset['Close'], dataset['Low'], dataset['High'], 30)
+dataset['%K200']  = STOK(dataset['Close'], dataset['Low'], dataset['High'], 200)
+dataset['%D200']  = STOD(dataset['Close'], dataset['Low'], dataset['High'], 200)
+
+dataset['MA21']  = MA(dataset, 21)
+dataset['MA63']  = MA(dataset, 63)
+dataset['MA252'] = MA(dataset, 252)
+
+# Clean up columns we won't use for modeling directly
+dataset_model = dataset.drop(columns=['Open','High','Low','Volume_(Currency)','short_mavg','long_mavg'], errors='ignore')
+dataset_model = dataset_model.dropna()
+
+dataset_model.tail()
+#--------------------------------------------------------------------------
+
+dataset_model[['Weighted_Price']].plot(title='Weighted Price (sample)')
+plt.show()
+dataset_model.hist(bins=40, figsize=(12, 12))
+plt.tight_layout(); plt.show()
+
+corr = dataset_model.corr()
+
+plt.figure(figsize=(14, 12))
+sns.heatmap(corr, cmap='coolwarm', center=0)
+plt.title('Correlation matrix (note strong collinearity among indicators)')
+plt.show()
+
+# Check class balance again after dropna
+(dataset_model['signal'].value_counts(normalize=True) * 100).round(2)
+
+#-----------------------------------------------------------------------------
+# split out validation dataset for the end
+subset_dataset = dataset_model.iloc[-100000:]  # last 100k rows slice
+subset_dataset.dropna(how='any', inplace=True)
+Y = subset_dataset["signal"]
+X = subset_dataset.loc[:, dataset_model.columns != 'signal']
+
+validation_size = 0.2
+seed = 1
+
+from sklearn.model_selection import train_test_split
+X_train, X_validation, Y_train, Y_validation = train_test_split(
+    X, Y, test_size=validation_size, random_state=1
+)
+
+X_train.shape, X_validation.shape, Y_train.mean().round(3), Y_validation.mean().round(3)
+
+#-----------------------------------------------------------------------------------------
+from sklearn.preprocessing import StandardScaler
+
+scaler = StandardScaler().fit(X_train)
+rescaledDataset = pd.DataFrame(
+    scaler.fit_transform(X_train),  # original code fits again; kept as-is
+    columns=X_train.columns,
+    index=X_train.index
+)
+rescaledDataset.head(2)
+
+#----------------------------------------------------------------------------------------
+from sklearn.decomposition import TruncatedSVD
+
+ncomps = 5
+svd = TruncatedSVD(n_components=ncomps)
+svd_fit = svd.fit(rescaledDataset)
+Y_pred = svd.fit_transform(rescaledDataset)  # respecting the original code
+
+ax = pd.Series(svd_fit.explained_variance_ratio_.cumsum()).plot(
+    kind='line', figsize=(10, 3)
+)
+ax.set_xlabel("Eigenvalues")
+ax.set_ylabel("Percentage Explained")
+
+print('Variance preserved by first 5 components == {:.2%}'.format(
+    svd_fit.explained_variance_ratio_.cumsum()[-1]
+))
+
+#------------------------------------------------------------------------------------------
+dfsvd = pd.DataFrame(
+ Y_pred, columns=['c{}'.format(c) for c in range(ncomps)],
+ index=rescaledDataset.index)
+print(dfsvd.shape)
+dfsvd.head()
+
+#------------------------------------------------------------------------------------------
+svdcols = [c for c in dfsvd.columns if c[0] == 'c']
+
+plotdims = 5
+ploteorows = 1
+dfsvdplot = dfsvd[svdcols].iloc[:, :plotdims].copy()
+dfsvdplot['signal'] = Y_train  # associate labels
+
+ax = sns.pairplot(dfsvdplot.iloc[::ploteorows, :], hue='signal', height=1.8)
+
+#----------------------------------------------------------------------------------------------
+tsne = TSNE(n_components=2, random_state=0)
+Z = tsne.fit_transform(dfsvd[svdcols])
+
+dftsne = pd.DataFrame(Z, columns=['x','y'], index=dfsvd.index)
+dftsne['signal'] = Y_train
+
+g = sns.lmplot(data=dftsne,x='x', y='y', hue='signal', fit_reg=False, height=8,
+               scatter_kws={'alpha':0.7,'s':60})
+
+#---------------------------------------------------------------------------------------------
+
+# test options for classification
+scoring = 'accuracy'
+
+import time
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import KFold, cross_val_score
+
+start_time = time.time()
+models = RandomForestClassifier(n_jobs=-1)
+
+# NOTE: kfold must be defined before use; we follow later definition too, but define a quick one here to time:
+kfold = KFold(n_splits=5)  # respecting your style; random_state requires shuffle=True in newer sklearn
+cv_results_XTrain = cross_val_score(models, X_train, Y_train, cv=kfold, scoring=scoring)
+print("Time Without Dimensionality Reduction--- %s seconds ---" % (time.time() - start_time))
+print("Result without dimensionality Reduction: %f (%f)" % (cv_results_XTrain.mean(), cv_results_XTrain.std()))
+
+#-------------------------------------------------------------------------------------------------------------
+start_time = time.time()
+X_SVD = dfsvd[svdcols].iloc[:, :5]
+cv_results_SVD = cross_val_score(models, X_SVD, Y_train, cv=kfold, scoring=scoring)
+print("Time with Dimensionality Reduction--- %s seconds ---" % (time.time() - start_time))
+
+
+print("Result with dimensionality Reduction: %f (%f)" % (cv_results_SVD.mean(), cv_results_SVD.std()))
+#-------------------------------------------------------------------------------------------------------------
+
+# Configuration
+num_folds = 10
+seed = 7
+scoring = 'accuracy'
+
+# Spot check the algorithms
+models = []
+models.append(('LR', LogisticRegression(n_jobs=-1)))
+models.append(('LDA', LinearDiscriminantAnalysis()))
+models.append(('KNN', KNeighborsClassifier()))
+models.append(('CART', DecisionTreeClassifier())) 
+models.append(('NB', GaussianNB()))
+models.append(('NN', MLPClassifier())) # Neural Network (Multilayer Perceptron)
+
+# Ensemble Models 
+models.append(('AB', AdaBoostClassifier()))
+models.append(('GBM', GradientBoostingClassifier()))
+models.append(('RF', RandomForestClassifier(n_jobs=-1)))
+
+# K-folds cross validation
+results = []
+names = []
+for name, model in models:
+    # Use KFold with shuffling to ensure data isn't biased by time-series order 
+    # (Note: For true time-series, TimeSeriesSplit is often preferred over KFold)
+    kfold = KFold(n_splits=num_folds, random_state=seed, shuffle=True)
+    cv_results = cross_val_score(model, X_train, Y_train, cv=kfold, scoring=scoring)
+    
+    results.append(cv_results)
+    names.append(name)
+    msg = "%s: %f (%f)" % (name, cv_results.mean(), cv_results.std())
+    print(msg)
+
+# Compare algorithms
+fig = plt.figure()
+fig.suptitle('Algorithm Comparison')
+ax = fig.add_subplot(111)
+plt.boxplot(results)
+ax.set_xticklabels(names)
+fig.set_size_inches(15,8)
+plt.show()
+
+#-------------------------------------------------------------------------------
+n_estimators = [20,80]
+max_depth = [5,10]
+criterion = ["gini","entropy"]
+param_grid = dict(n_estimators=n_estimators, max_depth=max_depth, criterion=criterion)
+
+model = RandomForestClassifier(n_jobs=-1)
+kfold = KFold(n_splits=num_folds)
+grid = GridSearchCV(estimator=model, param_grid=param_grid, scoring=scoring, cv=kfold)
+grid_result = grid.fit(rescaledDataset, Y_train)
+# Print Results
+print("Best: %f using %s" % (grid_result.best_score_, grid_result.best_params_))
+means = grid_result.cv_results_['mean_test_score']
+stds = grid_result.cv_results_['std_test_score']
+params = grid_result.cv_results_['params']
+ranks = grid_result.cv_results_['rank_test_score']
+for mean, stdev, param, rank in zip(means, stds, params, ranks):
+    print("#%d %f (%f) with: %r" % (rank, mean, stdev, param))
+    
+#---------------------------------------------------------------------------------
+# prepare model
+model = RandomForestClassifier(criterion='gini', n_estimators=80, max_depth=10, n_jobs=-1)
+# model = LogisticRegression()  # alternative baseline
+
+model.fit(X_train, Y_train)
+
+# estimate accuracy on validation set
+from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
+predictions = model.predict(X_validation)
+
+print(accuracy_score(Y_validation, predictions))
+print(confusion_matrix(Y_validation, predictions))
+print(classification_report(Y_validation, predictions))
+
+# Confusion matrix heatmap
+df_cm = pd.DataFrame(confusion_matrix(Y_validation, predictions),
+                     columns=np.unique(Y_validation), index=np.unique(Y_validation))
+df_cm.index.name = 'Actual'
+df_cm.columns.name = 'Predicted'
+sns.heatmap(df_cm, cmap="Blues", annot=True, annot_kws={"size": 16})
+plt.show()
+
+#---------------------------------------------
+Importance = pd.DataFrame({'Importance': model.feature_importances_ * 100}, index=X.columns)
+Importance.sort_values('Importance', axis=0, ascending=True).plot(kind='barh', color='r')
+plt.xlabel('Variable Importance')
+plt.title('Random Forest Feature Importance (%)')
+plt.show()
+
+# --------------------------------------------------------
+# Create column for Strategy Returns using day-ahead (lagged) position
+backtestdata = pd.DataFrame(index=X_validation.index)
+backtestdata['signal_pred']   = predictions
+backtestdata['signal_actual'] = Y_validation
+
+# Market returns from Close
+backtestdata['Market Returns']   = X_validation['Close'].pct_change()
+
+# Actual strategy uses the actual label (lagged)
+backtestdata['Actual Returns']   = backtestdata['Market Returns'] * backtestdata['signal_actual'].shift(1)
+
+# Our model strategy uses predicted label (lagged)
+backtestdata['Strategy Returns'] = backtestdata['Market Returns'] * backtestdata['signal_pred'].shift(1)
+
+backtestdata = backtestdata.reset_index()
+print(backtestdata.head())
+
+# Distribution and cumulative return plots
+backtestdata[['Strategy Returns','Actual Returns']].cumsum().hist()
+plt.show()
+backtestdata[['Strategy Returns','Actual Returns']].cumsum().plot()
+plt.title('Cumulative Returns: Strategy vs. “Actual” (toy)')
+plt.show()
