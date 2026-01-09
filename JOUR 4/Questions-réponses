@@ -1,0 +1,57 @@
+1. Pourquoi la Réduction de Dimensionnalité (DR) ?
+•	Pourquoi aiderait-elle un modèle de trading ?
+o	Vitesse : Les marchés évoluent vite. Moins de caractéristiques (features) permettent un entraînement et une exécution des signaux plus rapides.
+o	Bruit vs Signal : Les indicateurs techniques sont souvent redondants (ex: RSI 10 et RSI 30). La DR extrait l'essence du mouvement du prix en éliminant le "bruit" statistique.
+o	Généralisation : En réduisant la complexité, on force le modèle à ne garder que les tendances lourdes, ce qui aide à éviter l'overfitting (sur-apprentissage) sur des micro-mouvements historiques.
+•	Risques d'une utilisation "aveugle" :
+o	Perte d'information : Si on réduit trop (ex: passer de 50 à 2 variables), on peut perdre des nuances cruciales qui déclenchent les signaux.
+o	Interprétabilité : Une fois transformées par SVD ou PCA, les features n'ont plus de sens "physique" (on ne sait plus si c'est le RSI ou la Moyenne Mobile qui a causé le signal).
+________________________________________
+2. Chargement des données & EDA
+•	Colonnes pertinentes : Pour les indicateurs de prix, les colonnes cruciales sont Close, High, Low, et éventuellement Volume. Le "Weighted Price" est aussi une excellente métrique car il lisse les anomalies de prix par le volume échangé.
+•	Qualité des données :
+o	Rows/Cols : Le dataset contient généralement plusieurs millions de lignes (données à la minute).
+o	Problèmes : Les données de crypto-monnaies sur Bitstamp ont souvent des "gaps" (NA) durant les périodes de faible liquidité ou de maintenance des serveurs. Le ffill() (forward fill) est nécessaire mais peut créer des données artificiellement plates.
+________________________________________
+3. Feature Engineering & Corrélation
+•	Groupes corrélés : Les Moyennes Mobiles (EMA/MA) et les indicateurs de Momentum (ROC/MOM) sont souvent extrêmement corrélés entre eux car ils dérivent tous linéairement du prix de clôture.
+•	Pourquoi est-ce un problème ? La multicolinéarité perturbe des modèles comme la Régression Logistique (LR) ou la LDA. Cela rend les coefficients instables et peut donner une importance démesurée à une variable simplement parce qu'elle est répétée plusieurs fois sous différentes formes.
+•	Top 5 Features (Choix théorique) : 1. RSI : Pour le sur-achat/sur-vente.
+2. MOM : Pour la force de la tendance.
+3. EMA courte : Pour la réactivité au prix.
+4. %K (Stochastique) : Pour détecter les retournements locaux.
+5. Volume : Pour confirmer la validité d'une cassure de prix.
+________________________________________
+4. Standardisation & SVD
+•	Pourquoi standardiser ? La SVD (et la PCA) cherche à maximiser la variance. Si le prix est à 60 000 et le RSI à 50, la SVD pensera que le prix est 1200 fois plus important. La standardisation met tout le monde sur un pied d'égalité (moyenne 0, écart-type 1).
+•	Risque du Fit sur tout le dataset : Cela crée un Data Leakage. Le scaler "apprend" la moyenne et l'écart-type de la validation (le futur). En production, vous ne connaissez pas le futur, donc vous devez scaler uniquement sur les données passées (Train).
+________________________________________
+5. Interprétation SVD & t-SNE
+•	Pourquoi 5 composants suffisent ? À cause de la forte corrélation. Si 20 indicateurs disent "ça monte", ils contiennent tous la même information. La SVD compresse cette redondance.
+•	Perte : On perd les variations spécifiques (idiosyncratiques) qui ne sont pas corrélées au mouvement principal.
+•	C0...C4 : Ce sont des combinaisons linéaires de vos 25 indicateurs. C0 capture généralement la plus grande direction du marché (le "marché global").
+•	t-SNE : Le clustering par couleur montre que les signaux d'achat et de vente occupent des zones distinctes dans l'espace mathématique. Cependant, le t-SNE est instable pour la production car l'ajout d'une seule nouvelle donnée peut changer toute la carte.
+________________________________________
+6. Performance & Modèles (Code Complété)
+Voici comment remplir les xxx de votre script :
+Python
+models.append(('LR', LogisticRegression(n_jobs=-1)))
+models.append(('LDA', LinearDiscriminantAnalysis()))
+models.append(('KNN', KNeighborsClassifier()))
+models.append(('CART', DecisionTreeClassifier()))
+models.append(('NB', GaussianNB()))
+models.append(('NN', MLPClassifier()))
+models.append(('AB', AdaBoostClassifier()))
+models.append(('GBM', GradientBoostingClassifier()))
+models.append(('RF', RandomForestClassifier(n_jobs=-1)))
+
+# Dans la boucle :
+kfold = KFold(n_splits=num_folds, random_state=seed, shuffle=True)
+cv_results = cross_val_score(model, rescaledDataset, Y_train, cv=kfold, scoring=scoring)
+•	Gains de vitesse : La réduction SVD accélère massivement les modèles comme KNN ou SVM. Pour Random Forest, le gain est moindre car les arbres gèrent naturellement bien les dimensions, mais la baisse de précision est le "prix à payer" pour la simplicité.
+________________________________________
+7. Évaluation Finale & Backtesting
+•	Recall vs Précision : Si vous voulez attraper chaque hausse, privilégiez le Recall (ne pas rater un signal 1). Si vous voulez éviter de perdre de l'argent sur des faux signaux, privilégiez la Précision.
+•	Feature Importance : En général, les Moyennes Mobiles (EMA/MA) dominent car votre cible (le signal) a été construite directement à partir d'elles. C'est une forme d'auto-corrélation.
+•	Pourquoi shift(1) ? C'est la règle d'or du trading : on prédit à la clôture de la bougie $t$, mais on ne peut exécuter l'ordre qu'à l'ouverture de la bougie $t+1$. Si vous ne shiftez pas, vous trichez en utilisant le prix de clôture pour acheter au prix... de cette même clôture.
+
